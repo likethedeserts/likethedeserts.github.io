@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daily Mix Board</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
+  <div class="w-full max-w-3xl bg-white shadow-xl rounded-2xl p-6 space-y-6">
+    <h1 class="text-2xl font-semibold text-center">Daily Mix Board</h1>
+
+    <!-- Date -->
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1" for="entryDate">Date</label>
+      <input id="entryDate" type="date" class="border rounded-md p-2 w-full" />
+    </div>
+
+    <!-- Sliders / numeric inputs -->
+    <div id="sliders" class="space-y-6"></div>
+
+    <!-- Comment -->
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1" for="comment">Comment / context</label>
+      <textarea id="comment" rows="3" class="border rounded-md p-2 w-full" placeholder="Short note about the day…"></textarea>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="flex flex-wrap gap-3 justify-end">
+      <button id="saveBtn"   class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl shadow">Save entry</button>
+      <button id="exportBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl shadow">Export CSV</button>
+      <button id="importBtn" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl shadow">Import CSV</button>
+      <button id="clearBtn"  class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl shadow">Clear data</button>
+      <input id="importFile" type="file" accept=".csv,text/csv" class="hidden" />
+    </div>
+
+    <!-- History table -->
+    <div id="historyWrapper" class="hidden">
+      <h2 class="text-xl font-semibold mt-6 mb-2">Saved entries</h2>
+      <div class="overflow-x-auto max-h-80 overflow-y-auto">
+        <table id="historyTable" class="min-w-full text-xs">
+          <thead class="bg-gray-200 sticky top-0">
+            <tr id="historyHeader"></tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ---------------- Axis + Emotion definitions ---------------- */
+    const axes = [
+      ["Control", "Surrender"],
+      ["Facade", "Authenticity"],
+      ["Agency", "Tao"],
+      ["Analysis", "Feeling"],
+      ["Invisibility", "Visibility"],
+      ["Perfection", "Good‑enough"],
+      ["Solitude", "Connection"],
+      ["External worth", "Internal worth"]
+    ];
+    const emotions = [
+      "Peace","Elation","Curiosity","Flow","Anxiety","Irritation","Rage","Hopelessness","Sadness","Melancholy","Numbness"
+    ];
+
+    /* ---------------- DOM refs ---------------- */
+    const slidersDiv   = document.getElementById('sliders');
+    const dateInput    = document.getElementById('entryDate');
+    const commentInput = document.getElementById('comment');
+    const saveBtn      = document.getElementById('saveBtn');
+    const exportBtn    = document.getElementById('exportBtn');
+    const importBtn    = document.getElementById('importBtn');
+    const clearBtn     = document.getElementById('clearBtn');
+    const importFile   = document.getElementById('importFile');
+    const histWrap     = document.getElementById('historyWrapper');
+    const histHeader   = document.getElementById('historyHeader');
+    const histBody     = document.getElementById('historyBody');
+
+    /* ---------------- Helpers ---------------- */
+    const STORAGE_KEY = 'mix_board_entries_v4';
+    const load  = () => JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    const store = (arr)=> localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+    dateInput.value = new Date().toISOString().split('T')[0];
+
+    /* ---------------- Build slider + numeric input ---------------- */
+    function makeSlider(id,labelLeft,labelRight,def=5){
+      const wrap=document.createElement('div');
+      wrap.innerHTML=`<label class="block font-medium text-gray-700 mb-1">${labelLeft}${labelRight?` ⇄ ${labelRight}`:''}</label>
+        <div class="flex items-center gap-3">
+          <span class="text-xs w-6 text-right">0</span>
+          <input id="${id}"  type="range"   min="0" max="10" step="1" value="${def}" class="flex-1 accent-blue-600" />
+          <span class="text-xs w-6">10</span>
+          <input id="num_${id}" type="number" min="0" max="10" value="${def}" class="num-input w-14 border rounded-md p-1 text-center" />
+        </div>`;
+      const slider=wrap.querySelector(`#${id}`);
+      const num   =wrap.querySelector(`#num_${id}`);
+      // Sync slider → number
+      slider.addEventListener('input',()=> num.value = slider.value);
+      // Sync number → slider
+      num.addEventListener('input',()=>{
+        let v=Math.max(0,Math.min(10, +num.value || 0));
+        num.value=v; slider.value=v;
+      });
+      return wrap;
+    }
+
+    // Build sections
+    slidersDiv.appendChild(Object.assign(document.createElement('h2'),{className:'text-lg font-semibold',textContent:'Mind Axes'}));
+    axes.forEach(([l,r],i)=> slidersDiv.appendChild(makeSlider(`axis_${i}`,l,r)) );
+
+    slidersDiv.appendChild(Object.assign(document.createElement('h2'),{className:'text-lg font-semibold mt-4',textContent:'Emotions'}));
+    emotions.forEach((e,i)=> slidersDiv.appendChild(makeSlider(`emo_${i}`,e,'')) );
+
+    // Collect numeric inputs for Enter‑to‑advance behavior
+    let numInputs=[];
+    function refreshNumInputs(){
+      numInputs=[...document.querySelectorAll('.num-input')];
+      numInputs.forEach((inp,idx)=> inp.addEventListener('keydown',e=>{
+        if(e.key==='Enter'){
+          e.preventDefault();
+          (numInputs[idx+1]||numInputs[0]).focus();
+        }
+      }));
+    }
+    refreshNumInputs();
+
+    /* ---------------- History rendering ---------------- */
+    function renderHistory(){
+      const entries= load().sort((a,b)=> a.date.localeCompare(b.date));
+      if(!histHeader.children.length){
+        const th=(txt)=> Object.assign(document.createElement('th'),{className:'px-2 py-1 whitespace-nowrap',textContent:txt});
+        histHeader.appendChild(th('Date'));
+        axes.forEach(([l,r])=> histHeader.appendChild(th(`${l} ⇄ ${r}`)) );
+        emotions.forEach(e=> histHeader.appendChild(th(e)) );
+        histHeader.appendChild(th('Comment'));
+      }
+      histBody.innerHTML='';
+      entries.forEach(e=>{
+        const tr=document.createElement('tr'); tr.className='even:bg-gray-50';
+        tr.innerHTML=`<td class="px-2 py-1 whitespace-nowrap">${e.date}</td>`+
+          e.values.map(v=>`<td class="px-2 py-1 text-center">${v}</td>`).join('')+
+          `<td class="px-2 py-1">${e.comment}</td>`;
+        histBody.appendChild(tr);
+      });
+      histWrap.classList.toggle('hidden',!entries.length);
+    }
+
+    /* ---------------- Save entry ---------------- */
+    saveBtn.addEventListener('click',()=>{
+      const axisVals   = axes.map((_,i)=> +document.getElementById(`axis_${i}`).value);
+      const emotionVals= emotions.map((_,i)=> +document.getElementById(`emo_${i}`).value);
+      const entry={date:dateInput.value, values:[...axisVals,...emotionVals], comment:commentInput.value.trim()};
+      const arr=load();
+      const idx=arr.findIndex(e=> e.date===entry.date);
+      if(idx>-1) arr[idx]=entry; else arr.push(entry);
+      store(arr); renderHistory(); alert('Entry saved ✅');
+    });
+
+    /* ---------------- Export CSV ---------------- */
+    exportBtn.addEventListener('click',()=>{
+      const arr=load().sort((a,b)=> a.date.localeCompare(b.date));
+      if(!arr.length){alert('No data to export.');return;}
+      const header=['Date',...axes.map(([l,r])=>`${l} ⇄ ${r}`),...emotions,'Comment'];
+      const csv=[header,...arr.map(e=>[e.date,...e.values,e.comment])]
+        .map(r=> r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');
+      saveAs(new Blob([csv],{type:'text/csv;charset=utf-8'}),'mix_board_entries.csv');
+    });
+
+    /* ---------------- Import CSV ---------------- */
+    importBtn.addEventListener('click',()=> importFile.click());
+    importFile.addEventListener('change',()=>{
+      const file=importFile.files[0]; if(!file) return;
+      const reader=new FileReader();
+      reader.onload=e=>{
+        const lines=e.target.result.trim().split(/\r?\n/); if(lines.length<2){alert('CSV empty');return;}
+        const expected=1+axes.length+emotions.length+1;
+        const rows=lines.slice(1).map(l=>{
+          const out=[]; let cur=''; let inside=false;
+          for(const ch of l){
+            if(ch==='"'){inside=!inside; continue;}
+            if(ch===',' && !inside){out.push(cur); cur='';}
+            else cur+=ch;
+          }
+          out.push(cur);
+          return out.length>=expected?out:null;
+        }).filter(Boolean);
+        const imported=rows.map(r=>({date:r[0], values:r.slice(1,expected-1).map(Number), comment:r[expected-1]}));
+        if(!imported.length){alert('No valid rows');return;}
+        const arr=load();
+        imported.forEach(en=>{const i=arr.findIndex(e=>e.date===en.date); i>-1?arr[i]=en:arr.push(en);});
+        store(arr); renderHistory(); alert('Import complete ✅');
+      };
+      reader.readAsText(file);
+    });
+
+    /* ---------------- Clear data ---------------- */
+    clearBtn.addEventListener('click',()=>{
+      if(confirm('Erase ALL saved entries?')){
+        localStorage.removeItem(STORAGE_KEY);
+        renderHistory();
+        alert('All data cleared');
+      }
+    });
+
+    /* ---------------- Initial render ---------------- */
+    renderHistory();
+  </script>
+</body>
+</html>
